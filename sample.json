@@ -1,0 +1,6 @@
+{"eventId": "1", "message": "hello, world 1", "foo": {"bar": "baz"}}
+{"eventId": "2", "message": "hello, world 2"}
+{"eventId": "3", "message": "hello, world 3"}
+{"eventId": "4", "message": "hello, world 4"}
+{"eventId": "5", "message": "hello, world 5"}
+{"eventId": "6", "message": "hello, world 6"}
