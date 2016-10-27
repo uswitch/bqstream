@@ -100,13 +100,11 @@ func (i *Inserter) Flush() error {
 	return err
 }
 
-func (i *Inserter) InsertFrom(c <-chan map[string]bq.JsonValue) error {
-	for m := range c {
-		r, err := row(i.identity, m)
-		if err != nil {
-			return err
-		}
-		i.buffer(r)
+func (i *Inserter) Insert(record map[string]bq.JsonValue) error {
+	r, err := row(i.identity, record)
+	if err != nil {
+		return err
 	}
+	i.buffer(r)
 	return nil
 }

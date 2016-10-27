@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/uswitch/bqstream/bigquery"
+	bq "google.golang.org/api/bigquery/v2"
 	"gopkg.in/alecthomas/kingpin.v2"
 	"os"
 	"os/signal"
@@ -53,17 +54,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	ch := bigquery.NewChannel()
 	inserter, err := bigquery.NewInserter(destination, identity())
+	go flushOnInterrupt(inserter)
+	go flusher(inserter)
 	if err != nil {
 		fmt.Println("ERROR:", err.Error())
 	}
+	ch := make(chan map[string]bq.JsonValue)
+	go func() {
+		for m := range ch {
+			err := inserter.Insert(m)
+			if err != nil {
+				fmt.Println("ERROR:", err.Error())
+				os.Exit(1)
+			}
+		}
+	}()
 
-	go flushOnInterrupt(inserter)
-	go flusher(inserter)
-	go inserter.InsertFrom(ch)
-
-	err = client.Stream(reader, ch)
+	err = bigquery.ScanRecords(reader, ch)
 	if err != nil {
 		fmt.Println("ERROR:", err.Error())
 		os.Exit(1)

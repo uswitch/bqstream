@@ -5,7 +5,7 @@ Reads newline-delimited JSON from `stdin` and writes to BigQuery's Streaming API
 ## Usage
 
 ```
-$ bqstream --project-id=PROJECT --dataset-id=DATASET --table-id=TABLE --insert-id=eventId < sample.json
+$ cat sample.json | bqstream --project-id=PROJECT --dataset-id=DATASET --table-id=TABLE --insert-id=eventId
 ```
 
 ## License
