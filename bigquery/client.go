@@ -10,6 +10,10 @@ import (
 	"io"
 )
 
+func NewChannel() chan map[string]bq.JsonValue {
+	return make(chan map[string]bq.JsonValue)
+}
+
 type Client struct {
 }
 
@@ -25,7 +29,7 @@ func New() *Client {
 }
 
 func (c *Client) DestinationExists(dest *Destination) (bool, error) {
-	svc, err := c.service()
+	svc, err := newService()
 	if err != nil {
 		return false, err
 	}
@@ -38,7 +42,7 @@ func (c *Client) DestinationExists(dest *Destination) (bool, error) {
 	return table != nil, nil
 }
 
-func (c *Client) service() (*bq.Service, error) {
+func newService() (*bq.Service, error) {
 	ctx := context.Background()
 	client, err := google.DefaultClient(ctx, bq.BigqueryScope)
 	if err != nil {
@@ -91,13 +95,8 @@ func NewEmptyIdentity() *EmptyIdentity {
 	return &EmptyIdentity{}
 }
 
-func (c *Client) Stream(reader io.Reader, dest *Destination, identity RowIdentity) error {
+func (c *Client) Stream(reader io.Reader, ch chan<- map[string]bq.JsonValue) error {
 	scanner := bufio.NewScanner(reader)
-	svc, err := c.service()
-	if err != nil {
-		return err
-	}
-
 	for scanner.Scan() {
 		var out map[string]bq.JsonValue
 		err := json.Unmarshal(scanner.Bytes(), &out)
@@ -105,18 +104,7 @@ func (c *Client) Stream(reader io.Reader, dest *Destination, identity RowIdentit
 			return err
 		}
 
-		r, err := row(identity, out)
-		if err != nil {
-			return err
-		}
-		req := &bq.TableDataInsertAllRequest{
-			Rows:           []*bq.TableDataInsertAllRequestRows{r},
-			TemplateSuffix: dest.Suffix,
-		}
-		_, err = svc.Tabledata.InsertAll(dest.ProjectID, dest.DatasetID, dest.TableID, req).Do()
-		if err != nil {
-			return err
-		}
+		ch <- out
 	}
 	return nil
 }
