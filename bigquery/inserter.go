@@ -5,31 +5,41 @@ import (
 	"fmt"
 	bq "google.golang.org/api/bigquery/v2"
 	"os"
+	"sync"
 )
 
 type Inserter struct {
+	sync.RWMutex
+
 	destination *Destination
 	identity    RowIdentity
 	bigquery    *bq.Service
 
-	rowBuffer     []*bq.TableDataInsertAllRequestRows
-	insertedCount int64
-	errorCh       chan error
-	stopCh        chan bool
+	rowBuffer      []*bq.TableDataInsertAllRequestRows
+	flushSize      int
+	insertedCount  int64
+	ignoreUnknowns bool
 }
 
-func NewInserter(dest *Destination, identity RowIdentity) (*Inserter, error) {
+type InserterOpts struct {
+	Destination    *Destination
+	Identity       RowIdentity
+	IgnoreUnknowns bool
+	FlushSize      int
+}
+
+func NewInserter(opts *InserterOpts) (*Inserter, error) {
 	svc, err := newService()
 	if err != nil {
 		return nil, err
 	}
 
 	return &Inserter{
-		destination: dest,
-		identity:    identity,
-		bigquery:    svc,
-		errorCh:     make(chan error, 1),
-		stopCh:      make(chan bool),
+		destination:    opts.Destination,
+		identity:       opts.Identity,
+		bigquery:       svc,
+		ignoreUnknowns: opts.IgnoreUnknowns,
+		flushSize:      opts.FlushSize,
 	}, nil
 }
 
@@ -70,22 +80,30 @@ func (i *Inserter) buffer(r *bq.TableDataInsertAllRequestRows) {
 	i.rowBuffer = append(i.rowBuffer, r)
 }
 
+func (i *Inserter) currentInsertAllRequest() *bq.TableDataInsertAllRequest {
+	req := &bq.TableDataInsertAllRequest{
+		Rows:                i.rowBuffer,
+		IgnoreUnknownValues: i.ignoreUnknowns,
+	}
+
+	if i.destination.Suffix != "" {
+		req.TemplateSuffix = fmt.Sprintf("_%s", i.destination.Suffix)
+	}
+
+	return req
+}
+
 func (i *Inserter) insertAllBuffer() error {
 	if len(i.rowBuffer) == 0 {
 		return nil
 	}
 
-	req := &bq.TableDataInsertAllRequest{
-		Rows:           i.rowBuffer,
-		TemplateSuffix: i.destination.Suffix,
-	}
-
-	_, err := i.insert(req)
+	_, err := i.insert(i.currentInsertAllRequest())
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Flushed %d records", len(i.rowBuffer))
+	fmt.Fprintf(os.Stderr, "Flushed %d records\n", len(i.rowBuffer))
 
 	return nil
 }
@@ -95,9 +113,17 @@ func (i *Inserter) InsertedRows() int64 {
 }
 
 func (i *Inserter) Flush() error {
+	i.Lock()
+	defer i.Unlock()
+
 	err := i.insertAllBuffer()
 	i.cleanBuffer()
+
 	return err
+}
+
+func (i *Inserter) needToFlush() bool {
+	return len(i.rowBuffer) == i.flushSize
 }
 
 func (i *Inserter) Insert(record map[string]bq.JsonValue) error {
@@ -106,5 +132,10 @@ func (i *Inserter) Insert(record map[string]bq.JsonValue) error {
 		return err
 	}
 	i.buffer(r)
+
+	if i.needToFlush() {
+		i.Flush()
+	}
+
 	return nil
 }

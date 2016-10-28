@@ -3,6 +3,7 @@ package bigquery
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2/google"
 	bq "google.golang.org/api/bigquery/v2"
@@ -50,13 +51,20 @@ func newService() (*bq.Service, error) {
 	return svc, nil
 }
 
-func ScanRecords(reader io.Reader, ch chan<- map[string]bq.JsonValue) error {
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		var out map[string]bq.JsonValue
-		err := json.Unmarshal(scanner.Bytes(), &out)
+func ScanRecords(reader *bufio.Reader, ch chan<- map[string]bq.JsonValue) error {
+	for {
+		buf, err := reader.ReadBytes('\n')
+		if err == io.EOF {
+			return nil
+		}
 		if err != nil {
-			return err
+			return fmt.Errorf("error reading next: %s", err.Error())
+		}
+
+		var out map[string]bq.JsonValue
+		err = json.Unmarshal(buf, &out)
+		if err != nil {
+			return fmt.Errorf("error unmarshaling json: %s", err.Error())
 		}
 
 		ch <- out

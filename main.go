@@ -19,6 +19,8 @@ var (
 	suffix        = kingpin.Flag("table-suffix", "BigQuery Table suffix. Can be used when time sharding tables. YYYYMMDD").String()
 	insertId      = kingpin.Flag("insert-id", "Attribute name in JSON record that uniquely identifies record. Can be used to deduplicate BigQuery insertions.").String()
 	flushInterval = kingpin.Flag("flush-interval", "How frequently to stream records to BigQuery.").Default("5s").Duration()
+	flushSize     = kingpin.Flag("flush-size", "Maximum number of records to buffer between insertAll calls.").Default("50").Int()
+	ignoreUnknown = kingpin.Flag("ignore-unknown", "Accept values that don't match the schema. By default records with non-matching schemas will be rejected and inserts will fail.").Default("false").Bool()
 )
 
 func identity() bigquery.RowIdentity {
@@ -33,7 +35,7 @@ func main() {
 	kingpin.Parse()
 
 	client := bigquery.New()
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReaderSize(os.Stdin, 20*1024)
 	destination := &bigquery.Destination{
 		ProjectID: *projectId,
 		DatasetID: *datasetId,
@@ -54,7 +56,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	inserter, err := bigquery.NewInserter(destination, identity())
+	config := &bigquery.InserterOpts{
+		Destination:    destination,
+		Identity:       identity(),
+		IgnoreUnknowns: *ignoreUnknown,
+		FlushSize:      *flushSize,
+	}
+	inserter, err := bigquery.NewInserter(config)
 	go flushOnInterrupt(inserter)
 	go flusher(inserter)
 	if err != nil {
@@ -77,16 +85,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	flushOrExit(inserter)
 	fmt.Printf("Inserted %d rows\n", inserter.InsertedRows())
+}
+
+func flushOrExit(inserter *bigquery.Inserter) {
+	err := inserter.Flush()
+	if err != nil {
+		fmt.Println("ERROR:", err.Error())
+		os.Exit(1)
+	}
 }
 
 func flusher(inserter *bigquery.Inserter) {
 	for _ = range time.Tick(*flushInterval) {
-		err := inserter.Flush()
-		if err != nil {
-			fmt.Println("ERROR:", err.Error())
-			os.Exit(1)
-		}
+		flushOrExit(inserter)
 	}
 }
 
